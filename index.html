@@ -29,7 +29,7 @@ h1{font-size:32px;line-height:1.05;margin:0 0 4px;font-weight:600;letter-spacing
 canvas{display:block;width:100%;height:auto;cursor:crosshair}
 .busy{position:absolute;inset:auto 10px 10px auto;background:#000a;color:#fff;font-size:13px;padding:4px 10px;border-radius:8px;display:none}
 .read{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:14px 0 4px}
-.pct{font-size:clamp(34px,9vw,48px);font-weight:600;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pct{font-size:clamp(26px,8vw,48px);font-weight:600;line-height:1;font-variant-numeric:tabular-nums}.pct span{white-space:nowrap}
 .pct i{font-style:normal;color:var(--or);padding:0 .15em}
 .where{color:var(--mut);font-size:15px;margin:0 0 16px}
 .ctl{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:grid;gap:14px}
@@ -45,7 +45,7 @@ input[type=range]{width:100%;accent-color:var(--or);height:32px}
 <body>
 <main>
 <h1>Partir en dos</h1>
-<p class="sub">Apunta con la cámara a la figura y tócala (o su contorno) para fijarla. La línea naranja la parte en dos áreas iguales, en directo.</p>
+<p class="sub">Apunta con la cámara a la figura y tócala (o su contorno) para fijarla. Las líneas naranjas la parten en 2, 3 o 4 áreas iguales, en directo.</p>
 <div class="btns">
   <button class="btn pri" id="live" type="button">Cámara en directo</button>
   <button class="btn" id="pause" type="button" hidden>Pausar</button>
@@ -54,9 +54,14 @@ input[type=range]{width:100%;accent-color:var(--or);height:32px}
 </div>
 <video id="vid" playsinline muted autoplay style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none"></video>
 <div class="stage"><canvas id="cv" aria-label="Imagen con la línea de corte"></canvas><div class="busy" id="busy">Calculando…</div></div>
-<div class="read"><div class="pct" id="pct">50,0 %<i>|</i>50,0 %</div></div>
+<div class="read"><div class="pct" id="pct" aria-live="polite">50,0 %<i>|</i>50,0 %</div></div>
 <p class="where" id="where"></p>
 <div class="ctl">
+  <div class="chips" id="parts" role="group" aria-label="Número de partes">
+    <button class="chip on" data-n="2">1/2</button>
+    <button class="chip" data-n="3">1/3</button>
+    <button class="chip" data-n="4">1/4</button>
+  </div>
   <div class="chips" id="chips">
     <button class="chip on" data-a="90">Vertical</button>
     <button class="chip" data-a="0">Horizontal</button>
@@ -71,7 +76,7 @@ input[type=range]{width:100%;accent-color:var(--or);height:32px}
 {
 const cv=document.getElementById('cv'),ctx=cv.getContext('2d',{willReadFrequently:true});
 const $=id=>document.getElementById(id);
-let target=null,live=false,paused=false,shortMode=false,stream=null,bg=[0,0,0],W=0,H=0,base=null,seed=null,mask=null,px=null,py=null,A=0,ang=90,tol=100,box=null;
+let parts=2,target=null,live=false,paused=false,shortMode=false,stream=null,bg=[0,0,0],W=0,H=0,base=null,seed=null,mask=null,px=null,py=null,A=0,ang=90,tol=100,box=null;
 
 function loadImg(img){stopLive();target=null;
   const s=Math.min(1,800/Math.max(img.width,img.height));
@@ -127,46 +132,54 @@ function morph(src,R,isDil){const N=W*H,t=new Uint8Array(N),o=new Uint8Array(N);
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){let v=isDil?0:1;for(let k=-R;k<=R;k++){const Y=y+k;const s=(Y<0||Y>=H)?0:t[Y*W+x];if(isDil?s:!s){v=isDil?1:0;break}}o[y*W+x]=v}
   return o}
 function nrm(a){const t=a*Math.PI/180;return[-Math.sin(t),Math.cos(t),Math.cos(t),Math.sin(t)]}
-function bisect(a,step){
-  const[nx,ny]=nrm(a),n=Math.ceil(A/step),p=new Float32Array(n);
+function cutsAt(a,step){
+  const[nx,ny]=nrm(a),n=Math.ceil(A/step),p=new Float32Array(n),out=[];
   for(let i=0,j=0;i<A;i+=step,j++)p[j]=px[i]*nx+py[i]*ny;
-  p.sort();const m=p[n>>1]??0;if(step>1)return m;
-  let lo=0,hi=n;{let a=0,b=n;while(a<b){const k=(a+b)>>1;if(p[k]<m-.5)a=k+1;else b=k}lo=a}
-  {let a=lo,b=n;while(a<b){const k=(a+b)>>1;if(p[k]<m+.5)a=k+1;else b=k}hi=a}
-  const t=hi-lo;return t?m-.5+(n/2-lo)/t:m;
+  p.sort();
+  for(let k=1;k<parts;k++){const q=n*k/parts,m=p[Math.min(n-1,Math.floor(q))]??0;
+    if(step>1){out.push(m);continue}
+    let lo,hi;{let a=0,b=n;while(a<b){const j=(a+b)>>1;if(p[j]<m-.5)a=j+1;else b=j}lo=a}
+    {let a=lo,b=n;while(a<b){const j=(a+b)>>1;if(p[j]<m+.5)a=j+1;else b=j}hi=a}
+    const t=hi-lo;out.push(t?m-.5+(q-lo)/t:m)}
+  return out;
 }
-function cutLen(a,c){const[nx,ny]=nrm(a);let n=0;for(let i=0;i<A;i++)if(Math.abs(px[i]*nx+py[i]*ny-c)<.5)n++;return n}
+function cutLen(a,cs){const[nx,ny]=nrm(a);let n=0;for(let i=0;i<A;i++){const p=px[i]*nx+py[i]*ny;for(const c of cs)if(Math.abs(p-c)<.5)n++}return n}
 function shortest(fast){
   let best=90,bl=1e18;const st=fast?6:3;
-  for(let a=0;a<180;a+=st){const l=cutLen(a,bisect(a,3));if(l<bl){bl=l;best=a}}
-  for(let a=best-st;a<=best+st;a+=fast?1:.5){const aa=(a+180)%180,l=cutLen(aa,bisect(aa,1));if(l<bl){bl=l;best=aa}}
+  for(let a=0;a<180;a+=st){const l=cutLen(a,cutsAt(a,3));if(l<bl){bl=l;best=a}}
+  for(let a=best-st;a<=best+st;a+=fast?1:.5){const aa=(a+180)%180,l=cutLen(aa,cutsAt(aa,1));if(l<bl){bl=l;best=aa}}
   return Math.round(best);
 }
 function render(){
   if(!base)return;
   const img=new ImageData(new Uint8ClampedArray(base.data),W,H),d=img.data;
   if(!A){ctx.putImageData(img,0,0);$('pct').innerHTML='—';$('where').textContent='Toca la figura para seleccionarla.';return}
-  const c=bisect(ang,1),[nx,ny,dx,dy]=nrm(ang);let left=0,fl=0;
-  for(let i=0;i<A;i++){const q=c-(px[i]*nx+py[i]*ny)+.5;fl+=q>=1?1:q>0?q:0}
-  for(let i=0;i<W*H;i++)if(mask[i]){const x=i%W,y=(i/W)|0,s=x*nx+y*ny<c,k=i*4;
-    const C=s?[255,79,0]:[40,120,255];if(s)left++;
-    d[k]=d[k]*.55+C[0]*.45;d[k+1]=d[k+1]*.55+C[1]*.45;d[k+2]=d[k+2]*.55+C[2]*.45}
+  const cs=cutsAt(ang,1),[nx,ny,dx,dy]=nrm(ang),K=cs.length,fl=new Float64Array(K);
+  for(let i=0;i<A;i++){const p=px[i]*nx+py[i]*ny;for(let k=0;k<K;k++){const q=cs[k]-p+.5;fl[k]+=q>=1?1:q>0?q:0}}
+  const COL=[[255,79,0],[40,120,255],[255,196,0],[155,92,255]];
+  for(let i=0;i<W*H;i++)if(mask[i]){const x=i%W,y=(i/W)|0,p=x*nx+y*ny,k=i*4;let id=0;for(const c of cs)if(p>=c)id++;
+    const C=COL[id];d[k]=d[k]*.55+C[0]*.45;d[k+1]=d[k+1]*.55+C[1]*.45;d[k+2]=d[k+2]*.55+C[2]*.45}
   ctx.putImageData(img,0,0);
-  const P=[nx*c,ny*c],L=W+H,lw=Math.max(2,W/170);
-  ctx.lineCap='round';
-  ctx.beginPath();ctx.moveTo(P[0]-dx*L,P[1]-dy*L);ctx.lineTo(P[0]+dx*L,P[1]+dy*L);
-  ctx.strokeStyle='#fff';ctx.lineWidth=lw*2.2;ctx.stroke();ctx.strokeStyle='#ff4f00';ctx.lineWidth=lw;ctx.stroke();
+  const L=W+H,lw=Math.max(2,W/170);ctx.lineCap='round';
+  for(const c of cs){const P=[nx*c,ny*c];
+    ctx.beginPath();ctx.moveTo(P[0]-dx*L,P[1]-dy*L);ctx.lineTo(P[0]+dx*L,P[1]+dy*L);
+    ctx.strokeStyle='#fff';ctx.lineWidth=lw*2.2;ctx.stroke();ctx.strokeStyle='#ff4f00';ctx.lineWidth=lw;ctx.stroke()}
   ctx.beginPath();ctx.arc(seed[0],seed[1],lw*1.6,0,7);ctx.fillStyle='#fff';ctx.fill();ctx.lineWidth=lw*.7;ctx.strokeStyle='#111';ctx.stroke();
-  left=fl;const a=(left/A*100).toFixed(1).replace('.',','),b=((A-left)/A*100).toFixed(1).replace('.',',');
-  $('pct').innerHTML=`${a} %<i>|</i>${b} %`;
+  const sz=[];for(let k=0;k<=K;k++)sz.push(((k<K?fl[k]:A)-(k?fl[k-1]:0))/A*100);
+  if(ang===90)sz.reverse();
+  $('pct').innerHTML=sz.map(v=>'<span>'+v.toFixed(1).replace('.',',')+' %</span>').join('<i>|</i>');
+  const list=v=>v.length<2?v[0]+' %':v.slice(0,-1).join(' %, ')+' % y '+v[v.length-1]+' %';
   let w;
-  if(ang===90){const x=-c;w=`Vertical, al ${Math.round((x-box.x0)/(box.x1-box.x0||1)*100)} % del ancho de la figura contando desde la izquierda.`}
-  else if(ang===0){w=`Horizontal, al ${Math.round((c-box.y0)/(box.y1-box.y0||1)*100)} % de la altura de la figura contando desde arriba.`}
-  else w=`Inclinada ${ang}° respecto a la horizontal.`;
+  if(ang===90){const v=cs.map(c=>Math.round((-c-box.x0)/(box.x1-box.x0||1)*100)).sort((a,b)=>a-b);w=`Vertical${K>1?'es':''}, al ${list(v)} del ancho de la figura contando desde la izquierda.`}
+  else if(ang===0){const v=cs.map(c=>Math.round((c-box.y0)/(box.y1-box.y0||1)*100)).sort((a,b)=>a-b);w=`Horizontal${K>1?'es':''}, al ${list(v)} de la altura de la figura contando desde arriba.`}
+  else w=`${K>1?'Cortes paralelos inclinados':'Inclinada'} ${ang}° respecto a la horizontal.`;
   $('where').textContent=w+(A/(W*H)>.85?' Parece que has seleccionado el fondo: toca sobre la figura.':'');
 }
 function setAng(a,chip){ang=a;$('ang').value=a;$('angv').textContent=a+'°';
-  for(const b of document.querySelectorAll('.chip'))b.classList.toggle('on',b===chip);render()}
+  for(const b of document.querySelectorAll('#chips .chip'))b.classList.toggle('on',b===chip);render()}
+$('parts').addEventListener('click',e=>{const b=e.target.closest('.chip');if(!b)return;parts=+b.dataset.n;
+  for(const c of document.querySelectorAll('#parts .chip'))c.classList.toggle('on',c===b);
+  if(shortMode&&A&&!(live&&!paused)){const s=document.querySelector('#chips .chip[data-a="short"]');setAng(shortest(),s)}else render()});
 $('chips').addEventListener('click',e=>{const b=e.target.closest('.chip');if(!b||!A)return;
   shortMode=b.dataset.a==='short';
   if(shortMode&&live&&!paused)return setAng(ang,b);
